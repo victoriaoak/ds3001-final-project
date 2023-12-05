@@ -1,0 +1,693 @@
+---
+title: "DS 3001 Foundations of Machine Learning Final Project"
+author: "Sammy Park (scp9cqg) and Victoria Ok (vyo7tv)"
+date: "12/04/2023"
+format: 
+  html:
+    toc: true
+    toc-title: "Table of Contents"
+    toc-depth: 5
+    smooth-scroll: true
+    toc-location: left
+    theme: "Minty"
+editor: visual
+juypter: python3
+---
+
+# Goal
+To develop a predictive model for song popularity, aiming to assess and compare the popularity of a user's top 10 songs based on their musical features in relation to the top tracks.
+
+## Question
+Can we predict the popularity of songs based on their musical features?
+
+(duration, explicitness, danceability, energy, key, loudness, modality of the track, speech presence, acousticness, instrumentalness, liveness, valence, tempo, and time signature)
+
+# Data
+
+## Spotify Tracks Dataset from huggingface.co
+[https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset)
+
+## Data Description:
+The dataset comprises information on various music tracks available on Spotify, encompassing diverse attributes such as artist details, album names, track names, popularity scores, duration, explicit content, and musical traits like danceability, energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, valence, tempo, time signature, and track genre. The popularity score, ranging from 0 to 100, is algorithmically determined based on the track's play count and recency. Additionally, the dataset includes details about the presence of explicit lyrics, dance suitability, acoustic nature, instrumental content, live performance likelihood, and the emotional tone conveyed by each track. 
+
+## Basic Information about the Data:
+- size: 17.5+ MB
+- number of entries (rows): 114,000
+- number of features (columns): 21
+- number of categorical columns: 6
+- number of numerical columns: 15
+- columns with missing values: `artists`, `album_name`, `track_name`
+
+### Key Variables (from data documentation):
+- `track_genre`: The genre in which the track belongs
+- `popularity`: The popularity of a track is a value between 0 and 100, with 100 being the most popular, calculated algorithmically based on the total plays and recency of a track. Current plays contribute more to higher popularity. Duplicate tracks are independently rated, and artist/album popularity is derived from track popularity.
+- `duration_ms`: The track length in milliseconds
+- `explicit`: Whether or not the track has explicit lyrics (true = yes it does; false = no it does not OR unknown)
+- `danceability`: Danceability describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable
+- `energy`: Energy is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy.
+- `key`: The key the track is in. Integers map to pitches using standard Pitch Class notation. E.g. 0 = C, 1 = C♯/D♭, 2 = D, and so on. If no key was detected, the value is -1
+- `loudness`: The overall loudness of a track in decibels (dB)
+- `mode`: Mode indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0
+- `speechiness`: Speechiness measures the presence of spoken words in a track. A value close to 1.0 indicates exclusively spoken content, with values above 0.66 suggesting entirely spoken tracks. Values between 0.33 and 0.66 indicate a mix of music and speech, such as rap, while values below 0.33 likely represent non-speech-like music tracks.
+- `acousticness`: A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic
+- `instrumentalness`: Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content
+- `liveness`: Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live. A value above 0.8 provides strong likelihood that the track is live
+- `valence`: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry)
+- `tempo`: The overall estimated tempo of a track in beats per minute (BPM).
+- `time_signature`: An estimated time signature. The time signature ranges from 3 to 7 indicating time signatures of 3/4, to 7/4.
+
+# Data Preprocessing
+## Loading Libraries and Data
+```{python}
+### Import necessary packages
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from lime import lime_tabular
+
+# libraries for data pre-processing
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.model_selection import train_test_split
+
+# Libraries for kMeans clustering
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import MinMaxScaler
+
+# Libraries for random forest
+from sklearn.ensemble import RandomForestClassifier
+
+# Libraries for model evaluation and metrics
+from sklearn import metrics
+from sklearn.metrics import ConfusionMatrixDisplay
+
+```
+
+```{python}
+### Load and preview the dataset
+# spotify = pd.read_csv("/Users/SammyCPark/Desktop/DS3001/DS-3001/spotify_dataset.csv") # Sammy path
+spotify = pd.read_csv("C:/Users/victo/Downloads/Yr. 4 Sem. 1/DS 3001 FML/ds3001-final-project/dataset.csv") # Victoria path
+spotify.info()
+```
+
+## Data Cleaning
+```{python}
+# Drop the index column, as it is an unnecessary column
+# Drop the track_id column, because it is a unique identifier 
+spotify = spotify.drop(['index', 'track_id'], axis=1)
+spotify.info()
+```
+
+```{python}
+# Convert 'duration_ms' into 'duration_sec' (ms to s) for user readability
+spotify['duration_sec'] = spotify['duration_ms']/1000
+spotify = spotify.drop(['duration_ms'], axis=1)
+spotify.info()
+```
+
+```{python}
+# See how many categories exist in track_genre (114)
+genres = spotify["track_genre"].value_counts()
+genres
+```
+
+```{python}
+# Compress track_genre into smaller categories
+def categorize_genre(genre):
+    if genre in ["hip-hop", "power-pop", "pop-film", "pop", "mandopop", "k-pop", "j-pop", "j-idol", "cantopop"]:
+        return "Pop_HipHop"
+    elif genre in ["electronic", "electro", "edm", "dub", "dubstep", "groove", "idm", "breakbeat", "minimal-techno", "techno", "synth-pop", "detroit-techno", "party", "club"]:
+        return "Electronic"
+    elif genre in ["progressive-house", "afrobeat", "house", "chicago-house", "drum-and-bass", "tango", "reggaeton", "reggae", "disco", "deep-house", "dancehall", "dance", "funk", "garage", "samba", "salsa", "trance"]:
+        return "Dance"
+    elif genre in ["mpb", "malay", "latino", "latin", "j-rock", "j-dance", "world-music", "german", "french", "british", "brazil", "iranian", "turkish", "anime", "forro", "sertanejo", "indian", "swedish", "spanish", "trip-hop", "pagode", "ska"]:
+        return "World"
+    elif genre in ["songwriter", "singer-songwriter", "indie-pop", "indie", "bluegrass", "folk", "country", "honky-tonk", "alternative"]:
+        return "Indie_Country"
+    elif genre in ["punk", "metalcore", "metal", "psych-rock", "punk-rock", "heavy-metal", "hardstyle", "hardcore", "hard-rock", "black-metal", "alt-rock", "rockabilly", "rock-n-roll", "rock", "death-metal", "grunge", "grindcore", "goth", "emo", "industrial"]:
+        return "Metal_Rock"
+    elif genre in ["acoustic", "piano", "jazz", "blues", "r-n-b", "ambient", "soul", "guitar", "gospel", "opera", "classical"]:
+        return "Blues_Instrumental"
+    elif genre in ["kids", "study", "sleep", "show-tunes", "disney", "comedy", "children", "sad", "romance", "happy", "chill", "new-age"]:
+        return "Tunes"
+```
+
+```{python}
+# Apply the categorization function to the 'track_genre' column
+spotify['track_genre'] = spotify['track_genre'].apply(categorize_genre).astype("category")
+```
+
+```{python}
+spotify.info()
+```
+
+```{python}
+# One hot encoding track_genre 
+ordinal_encoder = OrdinalEncoder()
+spotify[['track_genre']] = ordinal_encoder.fit_transform(spotify[['track_genre']])
+spotify[['track_genre']].value_counts()
+```
+
+```{python}
+# View the encoded categories of track_genre
+ordinal_encoder.categories_
+```
+
+```{python}
+# view the null rows
+spotify[spotify.isna().any(axis=1)]
+```
+
+```{python}
+# Drop the one value that has null values
+spotify = spotify.dropna()
+spotify.info()
+```
+
+# Exploratory Data Analysis
+::: {.panel-tabset}
+
+## Numerical Data Summary
+```{python}
+# Output basic statistics from the numerical features
+spotify.describe()
+```
+
+## Histogram
+```{python}
+# Visualize numerical data as histograms to understand general distributions
+spotify.hist(bins=50, figsize=(20,15))
+plt.tight_layout()
+plt.show()
+```
+
+## Correlations
+On the first 10,000 samples in the dataset.
+```{python}
+spotify_num_corr = spotify.drop(columns=['artists','album_name','track_name'], axis=1)[0:10000]
+```
+
+```{python}
+correlations = spotify_num_corr.corr()
+correlations.shape
+```
+
+```{python}
+correlations["popularity"].sort_values(ascending=False)
+```
+
+```{python}
+from pandas.plotting import scatter_matrix
+
+# plot the correlations for the highest correlations
+attributes = ["popularity", "loudness", "valence", "energy"]
+scatter_matrix(spotify_num_corr[attributes], figsize=(12, 8))
+```
+
+:::
+
+Viewing the histogram, we saw that many songs had a popularity of 0, and wanted to investigate
+```{python}
+zero_pop = spotify[(spotify['popularity']==0)]
+zero_pop
+```
+
+There doesn't seem to be any glaring patterns (ex. track's audio features all being 0), so we will leave these be.
+
+Viewing the statistics of our target variable, we want to categorize the popularity variable into 3 classes: low, average, and high popularity. To make each class balanced (to prevent misleading accuracy scores). 
+
+```{python}
+print("33rd: ", np.percentile(spotify['popularity'], 33))
+print("67rd: ", np.percentile(spotify['popularity'], 67))
+```
+
+We will split the data as:
+
+- Low: 0 - 22
+- Average: 22 - 45
+- High: 45 - 100
+
+```{python}
+# Factor popularity to 3 levels of low, average, and high to create our classifier variable
+spotify['popularity'] = spotify.popularity.apply(lambda x: "low" if x <= 22
+                                                         else ("average" if (x > 22 and x <=45)
+                                                         else "high")).astype("category")
+spotify.info()
+```
+
+Duplicates, based on the documentation are the same tracks, but either from a single or an album. We have decided to drop any duplicates because the only difference between the two samples would essentially be the album name. 
+
+```{python}
+# identify the rows that are duplicated
+duplicated = spotify.duplicated()
+duplicate_indices = duplicated.index[duplicated == True].tolist()
+len(duplicate_indices)
+```
+
+```{python}
+# drop the duplicated samples
+spotify = spotify.drop(duplicate_indices)
+spotify.info()
+```
+
+```{python}
+# Check that all duplicates were removed
+spotify.duplicated().index[spotify.duplicated() == True].tolist()
+```
+
+We now have 101,318 samples in our dataset
+
+```{python}
+# Check how many samples are in each population category
+spotify[['popularity']].value_counts()
+```
+
+```{python}
+# One hot encoding popularity for classification
+spotify[['popularity']] = OrdinalEncoder().fit_transform(spotify[['popularity']])
+spotify[['popularity']].value_counts()
+```
+
+- 0 corresponds with average popularity
+- 1 corresponds with high popularity
+- 2 corresponds with low popularity
+
+## kMeans Clustering
+Employ kMeans clustering as a data exploration technique to uncover underlying patterns and structures within the dataset, allowing for the identification of general trends, associations, or distinctive patterns in the data.
+
+```{python}
+# Subset data without the artist, album name, and track name to create numerical dataset
+spotify_num = spotify.drop(columns=['artists','album_name','track_name'], axis=1)
+spotify_num.info()
+```
+
+```{python}
+# Scale the data for kmeans
+spotify_scaled_kmeans = pd.DataFrame(MinMaxScaler().fit_transform(spotify_num))
+```
+
+```{python}
+# Run data through kmeans model for 3 clusters
+spotify_kmeans = KMeans(n_clusters=3, random_state=42, n_init=10).fit(spotify_scaled_kmeans)
+```
+
+```{python}
+# see what the model labeled the training dataset
+print(spotify_kmeans.labels_)
+print(spotify_kmeans.predict(spotify_scaled_kmeans))
+```
+
+### Scatterplots
+::: {.panel-tabset}
+## Energy vs. Loudness
+```{python}
+group1 = spotify_scaled_kmeans[spotify_kmeans.labels_ == 0]
+group2= spotify_scaled_kmeans[spotify_kmeans.labels_ == 1]
+group3 = spotify_scaled_kmeans[spotify_kmeans.labels_ == 2]
+
+plt.scatter(group1[3], group1[5], c="orange", s=1, alpha=0.25)
+plt.scatter(group2[3], group2[5], c="green", s=1, alpha=0.25)
+plt.scatter(group3[3], group3[5], c="purple", s=1, alpha=0.25)
+plt.xlabel("energy")
+plt.ylabel("loudness")
+```
+
+## Tempo vs. Valence
+```{python}
+plt.scatter(group1[12], group1[11], c="orange", s=1, alpha=0.25)
+plt.scatter(group2[12], group2[11], c="green", s=1, alpha=0.25)
+plt.scatter(group3[12], group3[11], c="purple", s=1, alpha=0.25)
+plt.xlabel("tempo")
+plt.ylabel("valence")
+```
+
+:::
+
+# Methods
+## Random Forest
+Apply Random Forest to establish a predictive model for song popularity, enabling the assessment and comparison of a user's top 10 songs based on their musical features and their relation to top tracks.
+
+```{python}
+# split the data into predictors and labels
+X = spotify.drop(columns=["popularity"], axis=1)
+y = spotify['popularity']
+```
+
+```{python}
+# split the data into training and testing sets
+# training: 80%
+# testing: 20%
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, stratify=y, random_state=42) 
+```
+
+```{python}
+# verify that sets were stratified:
+print(y_train.value_counts())
+print(y_test.value_counts())
+```
+
+```{python}
+# drop the track artist/album information
+X_train_new = X_train.drop(columns=['artists', 'album_name', 'track_name'])
+X_test_new = X_test.drop(columns=['artists', 'album_name', 'track_name'])
+```
+
+```{python}
+# get a summary of the training dataset (+ verify that drops performed correctly)
+X_train_new.info()
+```
+
+```{python}
+# get a summary of the training dataset (+ verify that drops performed correctly)
+X_test_new.info()
+```
+
+Create a basic model
+```{python}
+RFC = RandomForestClassifier(
+        n_estimators = 1000, 
+        max_features = 4, # square root of number of features
+        bootstrap = True, 
+        max_samples = 10000, 
+        oob_score = True, 
+        random_state = 42,
+        n_jobs = -1,
+        verbose = True
+)
+```
+
+```{python}
+# fit the classifier on the training set
+spotify_RFC = RFC.fit(X_train_new, y_train)
+```
+
+```{python}
+# get the predictions of the model on the training set
+y_train_pred = spotify_RFC.predict(X_train_new)
+y_train_pred
+```
+
+# Initial Model Evaluation and Metrics
+
+```{python}
+# precision
+print("training precision: ", metrics.precision_score(y_train, y_train_pred, average="weighted"))
+```
+
+```{python}
+# recall
+print("training recall: ", metrics.recall_score(y_train, y_train_pred, average='weighted'))
+```
+
+```{python}
+# accuracy
+print("training accuracy: ", spotify_RFC.score(X_train_new, y_train))
+```
+
+```{python}
+# out of bag error:
+print('training OOB error rate: ' + str(1-spotify_RFC.oob_score_))
+```
+
+## Confusion Matrix
+```{python}
+# output the confusion matrix for a visualization
+ConfusionMatrixDisplay.from_estimator(spotify_RFC, X_train_new, y_train)
+```
+
+## Evaluation Summary 
+
+- Precision: 0.80
+- Recall: 0.80
+- Accuracy: 0.80
+- OOB error: 0.40
+
+# Hyperparameter Tuning
+Find the most optimal values for two hyperparameters: ```n_estimators``` and ```max_features``` to find the best model.
+
+::: {.panel-tabset}
+## n_estimators
+```{python}
+n_estimators_list = [100, 300, 500, 700, 900, 1000]
+forest_list = [RandomForestClassifier( 
+                n_estimators = n,
+                max_features = 4, # square root of number of features
+                bootstrap = True, 
+                warm_start=True,
+                max_samples = 10000, 
+                oob_score = True, 
+                random_state = 42).fit(X_train_new, y_train) for n in n_estimators_list]
+
+# Take the first three
+forest_list[:3]
+```
+
+```{python}
+# visualize how the error rate changes as the number of trees increases
+oob_errors = ([1-i.oob_score_ for i in forest_list])
+plt.plot(n_estimators_list,oob_errors)
+plt.title('Out Of Bag Error Against Number of Trees')
+plt.xlabel('Number of Trees')
+plt.ylabel('Out of Bag Error')
+plt.show()
+```
+
+```{python}
+# view the OOB errors in a table
+pd.DataFrame(list(zip(n_estimators_list, oob_errors)), columns = ['number of trees','oob_error'])
+```
+
+Making ```n_estimators``` = 1000 has the highest performance.
+
+## max_features
+```{python}
+max_features_list = [4, 7, 11, 15]
+
+forest_list2 = [RandomForestClassifier(
+                n_estimators = 1000, # what we found to be the most optimal
+                max_features= n, 
+                bootstrap = True, 
+                warm_start=True,
+                max_samples = 5000, 
+                oob_score = True, 
+                random_state = 42).fit(X_train_new, y_train) for n in max_features_list]
+
+forest_list2[:3]
+```
+
+```{python}
+oob_errors1 = ([1 - i.oob_score_ for i in forest_list2])
+plt.plot(max_features_list, oob_errors1)
+plt.title('Out Of Bag Error Against Number of Trees')
+plt.xlabel('max_features_list')
+plt.ylabel('Out of Bag Error')
+plt.show() 
+```
+
+```{python}
+pd.DataFrame(list(zip(max_features_list, oob_errors1)), columns = ['number of features','oob_error'])
+```
+
+Having 4 features shows to have the smallest OOB error
+
+:::
+
+Our new model will have max 1000 trees and max 4 features.
+
+```{python}
+# create the new model (train on whole dataset)
+spotify_RFC_tune = RandomForestClassifier(
+                n_estimators = 1000, # what we found to be the most optimal
+                max_features= 4, # what we found to be the most optimal
+                bootstrap = True, 
+                oob_score = True, 
+                random_state = 42,
+                n_jobs = -1,
+                verbose = True)
+spotify_RFC_tune
+```
+
+```{python}
+# fit the data
+spotify_RF_tuned = spotify_RFC_tune.fit(X_train_new, y_train)
+```
+
+```{python}
+print(pd.DataFrame(spotify_RF_tuned.feature_importances_,index = X_train_new.columns, columns=['importance']).sort_values('importance', ascending=False))
+```
+
+### Feature Importance
+```{python}
+#Here we compute both the mean and standard
+# deviation of accumulation of the impurity decrease within each tree.
+importances = spotify_RF_tuned.feature_importances_
+std = np.std([tree.feature_importances_ for tree in spotify_RF_tuned.estimators_], axis=0)
+
+#graph it
+forest_importances = pd.Series(importances, index=X_train_new.columns)
+
+fig, ax = plt.subplots()
+forest_importances.plot.bar(yerr=std, ax=ax)
+ax.set_title("Feature importances using MDI")
+ax.set_ylabel("Mean decrease in impurity")
+fig.tight_layout()
+```
+
+# Evaluate the Final Model on Test Set
+
+```{python}
+y_test_pred = spotify_RF_tuned.predict(X_test_new)
+y_test_pred
+```
+
+```{python}
+# precision
+print("testing precision: ", metrics.precision_score(y_test, y_test_pred, average="weighted"))
+```
+
+```{python}
+# recall
+print("testing recall: ", metrics.recall_score(y_test, y_test_pred, average='weighted'))
+```
+
+```{python}
+# accuracy
+print("testing accuracy: ", spotify_RF_tuned.score(X_test_new, y_test))
+```
+
+```{python}
+# out of bag error:
+print('testing OOB error rate: ' + str(1-spotify_RF_tuned.oob_score_))
+```
+
+## Confusion Matrix
+```{python}
+ConfusionMatrixDisplay.from_estimator(spotify_RF_tuned, X_test_new, y_test)
+```
+
+## Evaluation Summary
+
+- Precision: 0.64
+- Recall: 0.64
+- Accuracy: 0.64
+
+
+# Application
+Apply to our top 10 songs of 2023
+```{python}
+# load Sammy's top 10
+sammy_top10 = pd.read_csv("C:/Users/victo/Downloads/Yr. 4 Sem. 1/DS 3001 FML/ds3001-final-project/top10_sammy.csv")
+# load Victoria's top 10
+victoria_top10 = pd.read_csv("C:/Users/victo/Downloads/Yr. 4 Sem. 1/DS 3001 FML/ds3001-final-project/top10_victoria.csv")
+```
+
+```{python}
+sammy_top10.info()
+```
+
+```{python}
+victoria_top10.info()
+```
+
+```{python}
+sammy_top10 = sammy_top10.drop(columns=["index", "artists", "album_name", "track_name"])
+victoria_top10 = victoria_top10.drop(columns=["index", "artists", "album_name", "track_name"])
+```
+
+```{python}
+sammy_top10['duration_sec'] = sammy_top10['duration_ms']/1000
+sammy_top10 = sammy_top10.drop(['duration_ms'], axis=1)
+victoria_top10['duration_sec'] = victoria_top10['duration_ms']/1000
+victoria_top10 = victoria_top10.drop(['duration_ms'], axis=1)
+```
+
+```{python}
+predictions = ['low', 'average', 'high']
+```
+
+```{python}
+sammy_pred = spotify_RF_tuned.predict(sammy_top10)
+sammy_pred
+```
+
+```{python}
+sammy_count =[1, 0, 9]
+plt.bar(predictions, sammy_count)
+plt.xlabel("Popularity Type") 
+plt.ylabel("Count") 
+plt.title("Sammy's Track Popularity Predictions")
+```
+
+Most of the songs that Sammy listens to are considered popular, just one is considered to have low popularity
+
+Analyze the top song:
+```{python}
+#Create an explainer object
+explainer = lime_tabular.LimeTabularExplainer(sammy_top10.values,feature_names=sammy_top10.columns,class_names=['Low','Average', 'High'],discretize_continuous=True)
+
+#Get the explanation for RF
+exp = explainer.explain_instance(sammy_top10.values[0],spotify_RF_tuned.predict_proba,num_features=15)
+#next
+#Show the explanation
+exp.show_in_notebook(show_table=True, show_all=False)
+```
+
+```{python}
+victoria_pred = spotify_RF_tuned.predict(victoria_top10)
+victoria_pred
+```
+
+```{python}
+victoria_count = [0, 6, 4]
+plt.bar(predictions, victoria_count)
+plt.xlabel("Popularity Type") 
+plt.ylabel("Count") 
+plt.title("Victoria's Track Popularity Predictions") 
+```
+
+The songs that Victoria listens to are almost split evenly between average and high popularity.
+
+Analyze the top song:
+```{python}
+#Create an explainer object
+explainer = lime_tabular.LimeTabularExplainer(victoria_top10.values,feature_names=victoria_top10.columns,class_names=['Low','Average', 'High'],discretize_continuous=True)
+
+#Get the explanation for RF
+exp = explainer.explain_instance(victoria_top10.values[0],spotify_RF_tuned.predict_proba,num_features=15)
+#next
+#Show the explanation
+exp.show_in_notebook(show_table=True, show_all=False)
+```
+
+# Evaluation
+1. Precision:
+- Training Data: 80%
+- Testing Data: 64%
+Precision measures the accuracy of the positive predictions made by the model. In the context of predicting song popularity, precision would indicate the proportion of songs predicted to be popular that are actually popular. An 80% precision on the training data suggests that, of the songs predicted to be popular, 80% are indeed popular. However, there is a decrease in precision on the testing data to 64%, which means a lower proportion of predicted popular songs are actually popular in the test set.
+
+2. Recall (Sensitivity):
+- Training Data: 80%
+- Testing Data: 64%
+Recall measures the ability of the model to capture all the relevant instances (popular songs in this case). An 80% recall on the training data suggests that the model is good at identifying popular songs. However, on the testing data, the recall drops to 64%, indicating that the model might be missing some popular songs in the test set.
+
+3. Accuracy:
+- Training Data: 80%
+- Testing Data: 64%
+Accuracy measures the overall correctness of predictions. While 80% accuracy on the training data indicates that the model performs well on the training set, the drop to 64% on the testing data suggests a decrease in overall performance. This could be due to the model's inability to generalize well to new, unseen songs.
+
+4. Out-of-Bag (OOB) Error:
+- Training Data: 40%
+- Testing Data: 43%
+The OOB error is a measure used in Random Forest models. In this case, a 40% OOB error on the training data suggests that the model performs well on unseen samples during the training phase. However, the increase in OOB error to 43% on the testing data implies a potential drop in generalization performance, indicating that the model may not perform as well on new songs.
+
+# Conclusion
+In summary, the model seems to perform well on the training data, but there is a decrease in performance on the testing data, which suggests a potential issue with overfitting or lack of generalization. Further analysis and potentially adjusting the model or features may be necessary to improve its performance on new, unseen songs. Some possible actions we can take to learn underlying patterns better and reduce overfitting are:
+
+- Providing more diverse and representative training data can help the model. 
+- Pruning the decision trees by removing branches that do not contribute significantly to the model's performance. This prevents the tree from becoming too deep and overfitting the training data.
+- Remove features with lower variable importance to reduce noise.
+
+# Future Work/Considerations
+While the analysis benefited from variables like duration, explicitness, danceability, and others, limitations arose due to each genre having 1000 tracks, potentially resulting in an incomplete representation. Still, the dataset let us see how songs are somewhat normally distributed in popularity. To further the analysis, exploring user-specific factors (individual preferences, demographics, listening history) and external influences (cultural trends, regional preferences) could enhance the model's accuracy in predicting song popularity for diverse user profiles.
+
+In addition, in the future, we would also consider more hyperparameter tuning. Due to slow hardware, we were unable to test a vast range of values for `n_features` and `max_features`, so there may be more optimal values. In addition, the Random Forest Classifier has many other hyperparameters, such as `max_leaf_nodes` and `max_depth`, that we could also tune to create a better model. 
